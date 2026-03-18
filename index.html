@@ -1,341 +1,109 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <title>學生會意見平台 - 雲端同步版 0.4.0</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <style>
-        :root { --admin: #e74c3c; --student: #2ecc71; --viewer: #3498db; --reply-bg: #f8f9fa; --like-color: #e91e63; --excel-green: #217346; --notice-bg: #fff9db; --notice-border: #f59f00; }
-        body { font-family: "Microsoft JhengHei", sans-serif; background: #f5f7f9; margin: 0; padding-bottom: 50px; transition: background 0.3s; }
-        nav { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .container { max-width: 900px; margin: 20px auto; padding: 0 20px; }
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 25px; }
-        .hidden { display: none !important; }
-        
-        /* 加載中遮罩 */
-        #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); display: flex; justify-content: center; align-items: center; z-index: 999; font-weight: bold; color: #2c3e50; }
+/**
+ * 學生會意見平台 - 後端核心 (GAS)
+ * 功能：處理資料讀取(GET)與寫入/刪除/設定(POST)
+ */
 
-        /* QR Code 佈局 */
-        .qrcode-section { background: #fcfcfc; border: 1px solid #efefef; padding: 20px; border-radius: 10px; margin-bottom: 25px; }
-        .qrcode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 15px; }
-        .qr-card { border: 1px solid #eee; padding: 10px; text-align: center; border-radius: 8px; background: white; display: flex; flex-direction: column; align-items: center; }
-        .qr-label { font-weight: bold; margin-bottom: 10px; display: block; font-size: 0.95rem; white-space: nowrap; }
-        .qr-card div img { max-width: 100%; height: auto; }
-        .qr-download-btn { margin-top: 8px; font-size: 0.75rem; color: var(--viewer); cursor: pointer; border: 1px solid var(--viewer); padding: 2px 6px; border-radius: 4px; background: white; }
-        .qr-download-btn:hover { background: var(--viewer); color: white; }
+function doGet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // 1. 抓取回饋資料 (工作表: data)
+  var feedbackSheet = getOrCreateSheet(ss, "data", ["ID", "Category", "Text", "Likes", "Time"]);
+  var fRows = feedbackSheet.getDataRange().getValues();
+  var feedbacks = [];
+  for (var i = 1; i < fRows.length; i++) {
+    feedbacks.push({ id: fRows[i][0], category: fRows[i][1], text: fRows[i][2], likes: fRows[i][3], time: fRows[i][4] });
+  }
 
-        /* 公告與編輯器 */
-        .editor-toolbar { display: flex; gap: 5px; margin-bottom: 5px; background: #eee; padding: 5px; border-radius: 4px 4px 0 0; }
-        #notice-editor { border: 1px solid #ddd; border-top: none; padding: 10px; min-height: 80px; background: white; border-radius: 0 0 4px 4px; }
-        .notice-box { background: var(--notice-bg); border: 2px solid var(--notice-border); border-radius: 12px; padding: 20px; margin-bottom: 25px; }
-        
-        /* 歷史公告 */
-        .history-item { font-size: 0.9rem; padding: 12px 0; border-bottom: 1px solid rgba(0,0,0,0.05); position: relative; }
-        .del-notice-btn { position: absolute; right: 0; top: 12px; background: none; border: 1px solid #ff8787; color: #ff8787; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  // 2. 抓取公告資料 (工作表: notices)
+  var noticeSheet = getOrCreateSheet(ss, "notices", ["ID", "Content", "Time"]);
+  var notices = [];
+  var nRows = noticeSheet.getDataRange().getValues();
+  for (var j = nRows.length - 1; j >= 1; j--) {
+    notices.push({ id: nRows[j][0], content: nRows[j][1], time: nRows[j][2] });
+  }
 
-        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
-        textarea, select, input[type="text"], input[type="search"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 10px; box-sizing: border-box; }
-        .feedback-card { background: #fff; border-left: 8px solid var(--student); padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; position: relative; }
-    </style>
-</head>
-<body id="main-body">
+  // 3. 抓取配置資料 (工作表: config)
+  var configSheet = getOrCreateSheet(ss, "config", ["Title", "Categories", "BgColor"]);
+  var cRows = configSheet.getDataRange().getValues();
+  var config = {
+    title: cRows[1] ? cRows[1][0] : "學生會意見平台",
+    categories: cRows[1] ? cRows[1][1] : "生活設施,學業課程,社團活動,其他",
+    bgColor: cRows[1] ? cRows[1][2] : "#f5f7f9",
+    notices: notices
+  };
 
-<div id="loading-overlay" class="hidden">☁️ 雲端同步中...</div>
+  return ContentService.createTextOutput(JSON.stringify({
+    feedbacks: feedbacks,
+    config: config
+  })).setMimeType(ContentService.MimeType.JSON);
+}
 
-<nav>
-    <div style="font-size: 1.25rem; font-weight: bold;">🏫 學生會意見平台</div>
-    <div id="status-tag" style="padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; background: rgba(255,255,255,0.2);">身份載入中...</div>
-</nav>
+function doPost(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var params = JSON.parse(e.postData.contents);
+  var result = { result: "success" };
 
-<div class="container">
-    
-    <section id="area-admin" class="card hidden" style="border: 2px solid var(--admin)">
-        <h2 style="color: var(--admin); margin: 0 0 20px 0;">⚙️ 管理員控制台</h2>
-        
-        <div class="qrcode-section">
-            <h3 style="margin: 0; font-size: 1rem;">📲 QR Code 下載</h3>
-            <div class="qrcode-grid">
-                <div class="qr-card">
-                    <span class="qr-label" style="color: var(--admin)">管理員</span>
-                    <div id="qr-admin"></div>
-                    <button class="qr-download-btn" onclick="downloadQR('qr-admin', '管理員連結')">下載圖片</button>
-                </div>
-                <div class="qr-card">
-                    <span class="qr-label" style="color: var(--student)">作答者</span>
-                    <div id="qr-student"></div>
-                    <button class="qr-download-btn" onclick="downloadQR('qr-student', '作答者連結')">下載圖片</button>
-                </div>
-                <div class="qr-card">
-                    <span class="qr-label" style="color: var(--viewer)">僅瀏覽</span>
-                    <div id="qr-viewer"></div>
-                    <button class="qr-download-btn" onclick="downloadQR('qr-viewer', '瀏覽連結')">下載圖片</button>
-                </div>
-            </div>
-        </div>
+  // --- 處理：學生提交意見 ---
+  if (params.action === "addFeedback") {
+    var sheet = ss.getSheetByName("data");
+    sheet.appendRow([Date.now(), params.category, params.text, 0, new Date().toLocaleString()]);
+  }
+  
+  // --- 處理：管理員發布公告 ---
+  else if (params.action === "addNotice") {
+    var noticeSheet = ss.getSheetByName("notices");
+    noticeSheet.appendRow([Date.now(), params.content, new Date().toLocaleString()]);
+  }
 
-        <div style="background: #fff5f5; padding: 15px; border-radius: 8px; border: 1px solid #ffd8a8; margin-bottom: 20px;">
-            <label><strong>📢 發布新公告：</strong></label>
-            <div class="editor-toolbar" style="margin-top:10px;">
-                <button class="btn" style="padding:2px 8px; font-size:0.8rem;" onclick="execCmd('bold')">B</button>
-                <button class="btn" style="padding:2px 8px; font-size:0.8rem; font-style:italic;" onclick="execCmd('italic')">I</button>
-                <input type="color" onchange="execCmd('foreColor', this.value)" style="width:30px; height:24px; padding:0; border:none; cursor:pointer;">
-            </div>
-            <div id="notice-editor" contenteditable="true"></div>
-            <button class="btn" style="background: var(--admin); color: white; margin-top: 10px;" onclick="addNotice()">發布到雲端</button>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-            <div><label>題目：</label><input type="text" id="input-title"></div>
-            <div><label>分類 (用逗號隔開)：</label><input type="text" id="input-categories"></div>
-        </div>
-        <button class="btn" style="background: #333; color: white;" onclick="saveConfig()">儲存設定</button>
-    </section>
-
-    <section id="area-notice" class="notice-box hidden">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="background: var(--notice-border); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">最新公告</span>
-            <div id="latest-notice-admin-tool" class="hidden">
-                <span style="color: #ff8787; font-size: 0.75rem; cursor: pointer; text-decoration: underline;" onclick="deleteNotice('latest')">刪除此公告</span>
-            </div>
-        </div>
-        <div id="latest-notice-content" style="margin-top:10px; line-height: 1.6;"></div>
-        
-        <div id="history-section" class="hidden">
-            <span style="font-size: 0.85rem; color: #d9480f; cursor: pointer; text-decoration: underline; margin-top: 10px; display: inline-block;" onclick="toggleHistory()">檢視所有歷史公告 ▾</span>
-            <div id="history-list" class="hidden" style="margin-top:15px; border-top: 1px dashed #fab005;"></div>
-        </div>
-    </section>
-
-    <section id="area-vote" class="card hidden">
-        <h2 id="display-title" style="margin-top:0;">學生會意見平台</h2>
-        <select id="user-category"></select>
-        <textarea id="user-input" rows="3" placeholder="請填寫詳細意見(包含校區及位置"></textarea>
-        <button id="submit-btn" class="btn" style="background: var(--student); color:white; width: 100%;" onclick="submitFeedback()">提交意見</button>
-    </section>
-
-    <section id="area-display" class="card">
-        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-            <input type="search" id="search-input" placeholder="🔍 搜尋意見..." oninput="renderFeedbacks()" style="margin-bottom:0;">
-            <select id="sort-type" onchange="renderFeedbacks()" style="width:auto; margin-bottom:0;">
-                <option value="hot">🔥 熱門</option>
-                <option value="new">🆕 最新</option>
-            </select>
-        </div>
-        <div id="feedback-list">正在從雲端載入意見...</div>
-    </section>
-</div>
-
-<script>
-    // --- 核心設定：請貼上您的 Google Script 網址 ---
-    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzGkUD7V9d7ZswdnrIIANy6wPv-CzMzm-EFReR_zSrJSo4gG-c7lnLuOyUzYO5BaTU_/exec"; 
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const role = urlParams.get('role') || 'viewer';
-    const currentUrl = window.location.href.split('?')[0];
-
-    let storageData = [];
-    let pageConfig = {
-        title: "學生會意見平台",
-        bgColor: "#f5f7f9",
-        categories: "生活設施,學業課程,社團活動,其他",
-        notices: [] 
-    };
-
-    async function init() {
-        showLoading(true);
-        // 1. 權限標籤設定
-        const tag = document.getElementById('status-tag');
-        if (role === 'admin') {
-            tag.innerText = "🔴 管理員模式";
-            document.getElementById('area-admin').classList.remove('hidden');
-            document.getElementById('area-vote').classList.remove('hidden');
-            document.getElementById('latest-notice-admin-tool').classList.remove('hidden');
-            generateQRCodes();
-        } else if (role === 'student') {
-            tag.innerText = "🟢 作答者模式";
-            document.getElementById('area-vote').classList.remove('hidden');
-        } else {
-            tag.innerText = "🔵 僅限瀏覽";
-        }
-
-        // 2. 從雲端抓取所有資料
-        await refreshAllData();
-        showLoading(false);
+  // --- 處理：按讚 ---
+  else if (params.action === "likeFeedback") {
+    var sheet = ss.getSheetByName("data");
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] == params.id) {
+        sheet.getRange(i + 1, 4).setValue(Number(rows[i][3]) + 1);
+        break;
+      }
     }
+  }
 
-    // 顯示/隱藏讀取遮罩
-    function showLoading(show) {
-        document.getElementById('loading-overlay').classList.toggle('hidden', !show);
+  // --- 處理：刪除公告 ---
+  else if (params.action === "deleteNotice") {
+    var noticeSheet = ss.getSheetByName("notices");
+    var rows = noticeSheet.getDataRange().getValues();
+    if (params.type === 'latest') {
+      noticeSheet.deleteRow(rows.length);
+    } else {
+      for (var i = 1; i < rows.length; i++) {
+        if (rows[i][0] == params.id) { noticeSheet.deleteRow(i + 1); break; }
+      }
     }
+  }
 
-    // 從 GAS 抓取最新資料並更新畫面
-    async function refreshAllData() {
-        try {
-            const response = await fetch(SCRIPT_URL);
-            const cloudData = await response.json();
-            
-            storageData = cloudData.feedbacks || [];
-            pageConfig = cloudData.config || pageConfig;
-
-            applyConfig();
-            renderNotices();
-            renderFeedbacks();
-        } catch (e) {
-            console.error("雲端載入失敗", e);
-            document.getElementById('feedback-list').innerText = "雲端連線失敗，請檢查 Script 網址或網路。";
-        }
+  // --- 處理：刪除學生回覆 (修復同步失敗的核心) ---
+  else if (params.action === "deleteFeedback") {
+    var sheet = ss.getSheetByName("data");
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] == params.id) { sheet.deleteRow(i + 1); break; }
     }
+  }
 
-    // 通用的 GAS POST 請求
-    async function postToCloud(payload) {
-        showLoading(true);
-        try {
-            await fetch(SCRIPT_URL, {
-                method: "POST",
-                body: JSON.stringify(payload)
-            });
-            await refreshAllData();
-        } catch (e) {
-            alert("同步失敗：" + e);
-        }
-        showLoading(false);
-    }
+  // --- 處理：更新配置 (包含背景顏色) ---
+  else if (params.action === "updateConfig") {
+    var configSheet = ss.getSheetByName("config");
+    configSheet.getRange(2, 1, 1, 3).setValues([[params.title, params.categories, params.bgColor]]);
+  }
 
-    // --- 管理員功能 ---
-    function execCmd(cmd, value = null) { document.execCommand(cmd, false, value); }
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
 
-    async function addNotice() {
-        const content = document.getElementById('notice-editor').innerHTML.trim();
-        if (content === "" || content === "<br>") return alert("請輸入內容");
-        await postToCloud({ action: "addNotice", content: content });
-        document.getElementById('notice-editor').innerHTML = "";
-    }
-
-    async function deleteNotice(type, id = null) {
-        if(!confirm("確定刪除公告？")) return;
-        await postToCloud({ action: "deleteNotice", type: type, id: id });
-    }
-
-    async function saveConfig() {
-        const newTitle = document.getElementById('input-title').value;
-        const newCats = document.getElementById('input-categories').value;
-        await postToCloud({ action: "updateConfig", title: newTitle, categories: newCats });
-        alert("設定已同步至雲端！");
-    }
-
-    // --- 學生/通用功能 ---
-    async function submitFeedback() {
-        const text = document.getElementById('user-input').value.trim();
-        if(!text) return;
-        
-        await postToCloud({ 
-            action: "addFeedback", 
-            category: document.getElementById('user-category').value, 
-            text: text 
-        });
-        document.getElementById('user-input').value = "";
-    }
-
-    async function toggleLike(id) {
-        await postToCloud({ action: "likeFeedback", id: id });
-    }
-
-    async function deleteItem(id) {
-        if(!confirm("確定刪除這則意見？")) return;
-        await postToCloud({ action: "deleteFeedback", id: id });
-    }
-
-    // --- 介面渲染功能 ---
-    function applyConfig() {
-        document.getElementById('display-title').innerText = pageConfig.title;
-        document.getElementById('input-title').value = pageConfig.title;
-        document.getElementById('input-categories').value = pageConfig.categories;
-        document.getElementById('main-body').style.backgroundColor = pageConfig.bgColor || "#f5f7f9";
-        const select = document.getElementById('user-category');
-        select.innerHTML = pageConfig.categories.split(',').map(c => `<option value="${c.trim()}">${c.trim()}</option>`).join('');
-    }
-
-    function renderNotices() {
-        const area = document.getElementById('area-notice');
-        const latestContent = document.getElementById('latest-notice-content');
-        const historySec = document.getElementById('history-section');
-        const historyList = document.getElementById('history-list');
-
-        if (!pageConfig.notices || pageConfig.notices.length === 0) {
-            area.classList.add('hidden');
-            return;
-        }
-
-        area.classList.remove('hidden');
-        latestContent.innerHTML = pageConfig.notices[0].content;
-
-        if (pageConfig.notices.length > 1) {
-            historySec.classList.remove('hidden');
-            historyList.innerHTML = pageConfig.notices.slice(1).map(n => `
-                <div class="history-item">
-                    <small style="color:#999;">[${n.time}]</small>
-                    ${role === 'admin' ? `<button class="del-notice-btn" onclick="deleteNotice('specific', ${n.id})">刪除</button>` : ''}
-                    <div style="margin-top:5px;">${n.content}</div>
-                </div>
-            `).join('');
-        } else {
-            historySec.classList.add('hidden');
-        }
-    }
-
-    function renderFeedbacks() {
-        const list = document.getElementById('feedback-list');
-        const query = document.getElementById('search-input').value.toLowerCase();
-        const sort = document.getElementById('sort-type').value;
-        
-        let filtered = storageData.filter(i => i.text.toLowerCase().includes(query));
-        
-        if (sort === 'hot') {
-            filtered.sort((a,b) => (b.likes||0) - (a.likes||0));
-        } else {
-            filtered.sort((a,b) => b.id - a.id);
-        }
-
-        if (filtered.length === 0) {
-            list.innerHTML = "<p style='text-align:center; color:#999;'>查無相符的意見</p>";
-            return;
-        }
-
-        list.innerHTML = filtered.map(item => `
-            <div class="feedback-card">
-                ${role === 'admin' ? `<button style="position:absolute; right:10px; top:10px; background:#ff8787; color:white; border:none; border-radius:50%; width:22px; height:22px; cursor:pointer;" onclick="deleteItem(${item.id})">×</button>` : ''}
-                <div style="font-size:0.75rem; color:#666; margin-bottom:5px;"># ${item.category}</div>
-                <div style="margin-bottom:15px; line-height:1.5;">${item.text}</div>
-                <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; color:#999; border-top:1px solid #eee; padding-top:10px;">
-                    <span>${item.time}</span>
-                    <span onclick="toggleLike(${item.id})" style="cursor:pointer; background:#fff; border:1px solid #eee; padding:2px 10px; border-radius:15px; transition: 0.2s;">❤ ${item.likes || 0}</span>
-                </div>
-            </div>
-        `).join('');
-    }
-
-    function toggleHistory() { document.getElementById('history-list').classList.toggle('hidden'); }
-
-    function generateQRCodes() {
-        const qrConfig = { width: 120, height: 120, colorDark: "#2c3e50" };
-        document.getElementById("qr-admin").innerHTML = "";
-        document.getElementById("qr-student").innerHTML = "";
-        document.getElementById("qr-viewer").innerHTML = "";
-        new QRCode(document.getElementById("qr-admin"), { ...qrConfig, text: currentUrl + "?role=admin" });
-        new QRCode(document.getElementById("qr-student"), { ...qrConfig, text: currentUrl + "?role=student" });
-        new QRCode(document.getElementById("qr-viewer"), { ...qrConfig, text: currentUrl + "?role=viewer" });
-    }
-
-    function downloadQR(containerId, name) {
-        const img = document.getElementById(containerId).querySelector('img');
-        if (!img) return;
-        const link = document.createElement('a');
-        link.href = img.src;
-        link.download = `${name}_QRCode.png`;
-        link.click();
-    }
-
-    init();
-</script>
-</body>
-</html>
+// 輔助函式：確保工作表存在
+function getOrCreateSheet(ss, name, headers) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(headers);
+  }
+  return sheet;
+}
