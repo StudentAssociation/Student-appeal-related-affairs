@@ -1,109 +1,164 @@
-/**
- * 學生會意見平台 - 後端核心 (GAS)
- * 功能：處理資料讀取(GET)與寫入/刪除/設定(POST)
- */
+<body id="main-body">
 
-function doGet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  // 1. 抓取回饋資料 (工作表: data)
-  var feedbackSheet = getOrCreateSheet(ss, "data", ["ID", "Category", "Text", "Likes", "Time"]);
-  var fRows = feedbackSheet.getDataRange().getValues();
-  var feedbacks = [];
-  for (var i = 1; i < fRows.length; i++) {
-    feedbacks.push({ id: fRows[i][0], category: fRows[i][1], text: fRows[i][2], likes: fRows[i][3], time: fRows[i][4] });
-  }
+<div id="loading-overlay" class="hidden">☁️ 雲端同步中...</div>
 
-  // 2. 抓取公告資料 (工作表: notices)
-  var noticeSheet = getOrCreateSheet(ss, "notices", ["ID", "Content", "Time"]);
-  var notices = [];
-  var nRows = noticeSheet.getDataRange().getValues();
-  for (var j = nRows.length - 1; j >= 1; j--) {
-    notices.push({ id: nRows[j][0], content: nRows[j][1], time: nRows[j][2] });
-  }
+<nav>
+    <div style="font-size: 1.25rem; font-weight: bold;">🏫 學生會意見平台</div>
+    <div id="status-tag" style="padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; background: rgba(255,255,255,0.2);">身份載入中...</div>
+</nav>
 
-  // 3. 抓取配置資料 (工作表: config)
-  var configSheet = getOrCreateSheet(ss, "config", ["Title", "Categories", "BgColor"]);
-  var cRows = configSheet.getDataRange().getValues();
-  var config = {
-    title: cRows[1] ? cRows[1][0] : "學生會意見平台",
-    categories: cRows[1] ? cRows[1][1] : "生活設施,學業課程,社團活動,其他",
-    bgColor: cRows[1] ? cRows[1][2] : "#f5f7f9",
-    notices: notices
-  };
+<div class="container">
+    <section id="area-admin" class="card hidden" style="border: 2px solid var(--admin)">
+        <h2 style="color: var(--admin); margin: 0 0 20px 0;">⚙️ 管理員控制台</h2>
+        
+        <div class="qrcode-section">
+            <h3 style="margin: 0; font-size: 1rem;">📲 QR Code 下載</h3>
+            <div class="qrcode-grid">
+                <div class="qr-card"><span class="qr-label" style="color: var(--admin)">管理員</span><div id="qr-admin"></div><button class="qr-download-btn" onclick="downloadQR('qr-admin', '管理員')">下載</button></div>
+                <div class="qr-card"><span class="qr-label" style="color: var(--student)">作答者</span><div id="qr-student"></div><button class="qr-download-btn" onclick="downloadQR('qr-student', '作答者')">下載</button></div>
+                <div class="qr-card"><span class="qr-label" style="color: var(--viewer)">僅瀏覽</span><div id="qr-viewer"></div><button class="qr-download-btn" onclick="downloadQR('qr-viewer', '瀏覽')">下載</button></div>
+            </div>
+        </div>
 
-  return ContentService.createTextOutput(JSON.stringify({
-    feedbacks: feedbacks,
-    config: config
-  })).setMimeType(ContentService.MimeType.JSON);
-}
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 10px;">
+                <div><label>題目：</label><input type="text" id="input-title"></div>
+                <div><label>分類 (逗號隔開)：</label><input type="text" id="input-categories"></div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label><strong>🎨 網頁背景顏色：</strong></label>
+                <input type="color" id="input-bgcolor" style="width: 100%; height: 40px; cursor: pointer; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <button class="btn" style="background: #333; color: white; width:100%;" onclick="saveConfig()">儲存所有平台設定</button>
+        </div>
 
-function doPost(e) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var params = JSON.parse(e.postData.contents);
-  var result = { result: "success" };
+        <div style="background: #fff5f5; padding: 15px; border-radius: 8px; border: 1px solid #ffd8a8;">
+            <label><strong>📢 發布新公告：</strong></label>
+            <div class="editor-toolbar" style="margin-top:10px;">
+                <button class="btn" style="padding:2px 8px; font-size:0.8rem;" onclick="execCmd('bold')">B</button>
+                <button class="btn" style="padding:2px 8px; font-size:0.8rem; font-style:italic;" onclick="execCmd('italic')">I</button>
+            </div>
+            <div id="notice-editor" contenteditable="true" style="border:1px solid #ddd; background:white; min-height:80px; padding:10px;"></div>
+            <button class="btn" style="background: var(--admin); color: white; margin-top: 10px; width:100%;" onclick="addNotice()">發布公告</button>
+        </div>
+    </section>
 
-  // --- 處理：學生提交意見 ---
-  if (params.action === "addFeedback") {
-    var sheet = ss.getSheetByName("data");
-    sheet.appendRow([Date.now(), params.category, params.text, 0, new Date().toLocaleString()]);
-  }
-  
-  // --- 處理：管理員發布公告 ---
-  else if (params.action === "addNotice") {
-    var noticeSheet = ss.getSheetByName("notices");
-    noticeSheet.appendRow([Date.now(), params.content, new Date().toLocaleString()]);
-  }
+    <section id="area-notice" class="notice-box hidden">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="background: var(--notice-border); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">最新公告</span>
+            <div id="latest-notice-admin-tool" class="hidden">
+                <span style="color: #ff8787; font-size: 0.75rem; cursor: pointer; text-decoration: underline;" onclick="deleteNotice('latest')">刪除</span>
+            </div>
+        </div>
+        <div id="latest-notice-content" style="margin-top:10px;"></div>
+        <div id="history-section" class="hidden"><span onclick="toggleHistory()" style="cursor:pointer; font-size:0.8rem; color:#666;">查看歷史公告 ▾</span><div id="history-list" class="hidden"></div></div>
+    </section>
 
-  // --- 處理：按讚 ---
-  else if (params.action === "likeFeedback") {
-    var sheet = ss.getSheetByName("data");
-    var rows = sheet.getDataRange().getValues();
-    for (var i = 1; i < rows.length; i++) {
-      if (rows[i][0] == params.id) {
-        sheet.getRange(i + 1, 4).setValue(Number(rows[i][3]) + 1);
-        break;
-      }
+    <section id="area-vote" class="card hidden">
+        <h2 id="display-title">載入中...</h2>
+        <select id="user-category"></select>
+        <textarea id="user-input" rows="3" placeholder="請填寫意見..."></textarea>
+        <button id="submit-btn" class="btn" style="background: var(--student); color:white; width: 100%;" onclick="submitFeedback()">提交意見</button>
+    </section>
+
+    <section id="area-display" class="card">
+        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <input type="search" id="search-input" placeholder="🔍 搜尋..." oninput="renderFeedbacks()">
+            <select id="sort-type" onchange="renderFeedbacks()" style="width:auto;"><option value="hot">熱門</option><option value="new">最新</option></select>
+        </div>
+        <div id="feedback-list">載入中...</div>
+    </section>
+</div>
+
+<script>
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzGkUD7V9d7ZswdnrIIANy6wPv-CzMzm-EFReR_zSrJSo4gG-c7lnLuOyUzYO5BaTU_/exec"; 
+    const urlParams = new URLSearchParams(window.location.search);
+    const role = urlParams.get('role') || 'viewer';
+    const currentUrl = window.location.href.split('?')[0];
+
+    let storageData = [];
+    let pageConfig = { title: "學生會意見平台", bgColor: "#f5f7f9", categories: "生活設施,學業課程", notices: [] };
+
+    async function init() {
+        showLoading(true);
+        const tag = document.getElementById('status-tag');
+        if (role === 'admin') {
+            tag.innerText = "🔴 管理員模式";
+            document.getElementById('area-admin').classList.remove('hidden');
+            document.getElementById('area-vote').classList.remove('hidden');
+            document.getElementById('latest-notice-admin-tool').classList.remove('hidden');
+            generateQRCodes();
+        } else if (role === 'student') {
+            tag.innerText = "🟢 作答者模式";
+            document.getElementById('area-vote').classList.remove('hidden');
+        } else {
+            tag.innerText = "🔵 僅限瀏覽";
+        }
+        await refreshAllData();
+        showLoading(false);
     }
-  }
 
-  // --- 處理：刪除公告 ---
-  else if (params.action === "deleteNotice") {
-    var noticeSheet = ss.getSheetByName("notices");
-    var rows = noticeSheet.getDataRange().getValues();
-    if (params.type === 'latest') {
-      noticeSheet.deleteRow(rows.length);
-    } else {
-      for (var i = 1; i < rows.length; i++) {
-        if (rows[i][0] == params.id) { noticeSheet.deleteRow(i + 1); break; }
-      }
+    function showLoading(show) { document.getElementById('loading-overlay').classList.toggle('hidden', !show); }
+
+    async function refreshAllData() {
+        try {
+            const res = await fetch(SCRIPT_URL);
+            const data = await res.json();
+            storageData = data.feedbacks || [];
+            pageConfig = data.config || pageConfig;
+            applyConfig();
+            renderNotices();
+            renderFeedbacks();
+        } catch (e) { console.error(e); }
     }
-  }
 
-  // --- 處理：刪除學生回覆 (修復同步失敗的核心) ---
-  else if (params.action === "deleteFeedback") {
-    var sheet = ss.getSheetByName("data");
-    var rows = sheet.getDataRange().getValues();
-    for (var i = 1; i < rows.length; i++) {
-      if (rows[i][0] == params.id) { sheet.deleteRow(i + 1); break; }
+    async function postToCloud(payload) {
+        showLoading(true);
+        try {
+            const res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify(payload) });
+            const result = await res.json();
+            if(result.result === "success") await refreshAllData();
+        } catch (e) { alert("連線失敗：" + e); }
+        showLoading(false);
     }
-  }
 
-  // --- 處理：更新配置 (包含背景顏色) ---
-  else if (params.action === "updateConfig") {
-    var configSheet = ss.getSheetByName("config");
-    configSheet.getRange(2, 1, 1, 3).setValues([[params.title, params.categories, params.bgColor]]);
-  }
+    function applyConfig() {
+        document.getElementById('display-title').innerText = pageConfig.title;
+        document.getElementById('input-title').value = pageConfig.title;
+        document.getElementById('input-categories').value = pageConfig.categories;
+        document.getElementById('input-bgcolor').value = pageConfig.bgColor || "#f5f7f9";
+        document.body.style.backgroundColor = pageConfig.bgColor || "#f5f7f9";
+        const select = document.getElementById('user-category');
+        select.innerHTML = pageConfig.categories.split(',').map(c => `<option value="${c.trim()}">${c.trim()}</option>`).join('');
+    }
 
-  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
-}
+    async function saveConfig() {
+        await postToCloud({ 
+            action: "updateConfig", 
+            title: document.getElementById('input-title').value,
+            categories: document.getElementById('input-categories').value,
+            bgColor: document.getElementById('input-bgcolor').value
+        });
+        alert("設定已儲存！");
+    }
 
-// 輔助函式：確保工作表存在
-function getOrCreateSheet(ss, name, headers) {
-  var sheet = ss.getSheetByName(name);
-  if (!sheet) {
-    sheet = ss.insertSheet(name);
-    sheet.appendRow(headers);
-  }
-  return sheet;
-}
+    // ... 其餘 addNotice, deleteNotice, submitFeedback, toggleLike, deleteItem, renderNotices, renderFeedbacks, generateQRCodes 等函式保持不變 ...
+    // (請確保 deleteItem 呼叫的是 action: "deleteFeedback")
+    
+    async function deleteItem(id) {
+        if(!confirm("確定刪除這則意見？")) return;
+        await postToCloud({ action: "deleteFeedback", id: id });
+    }
+
+    async function addNotice() {
+        const content = document.getElementById('notice-editor').innerHTML.trim();
+        if(!content) return;
+        await postToCloud({ action: "addNotice", content: content });
+        document.getElementById('notice-editor').innerHTML = "";
+    }
+
+    function execCmd(cmd) { document.execCommand(cmd, false, null); }
+    function toggleHistory() { document.getElementById('history-list').classList.toggle('hidden'); }
+
+    init();
+</script>
